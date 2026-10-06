@@ -1,5 +1,6 @@
 from datetime import datetime
 from pymongo import MongoClient
+import hashlib
 
 # 1. Connect to MongoDB (local or Atlas URI)
 # If running locally with default port, use "mongodb://localhost:27017/"
@@ -38,6 +39,67 @@ def log_attendance(email, action):
   db.attendance.insert_one(attendance_doc)
   print(f"⏰ Recorded {action} for {email}")
 
+  # ==========================================
+# 3. LEAVE REQUEST OPERATIONS
+# ==========================================
+def apply_leave(email, leave_type, start_date, end_date, reason):
+  leave_doc = {
+      "email": email,
+      "leave_type": leave_type,  # e.g., "Sick Leave", "Casual Leave"
+      "start_date": start_date,
+      "end_date": end_date,
+      "reason": reason,
+      "status": "Pending",  # Pending, Approved, Rejected
+      "applied_on": datetime.now().strftime("%Y-%m-%d"),
+  }
+  result = db.leaves.insert_one(leave_doc)
+  print(f"🏖️️ Leave request submitted for {email} (ID: {result.inserted_id})")
+
+
+def update_leave_status(email, start_date, new_status):
+  result = db.leaves.update_one(
+      {"email": email, "start_date": start_date},
+      {"$set": {"status": new_status}},
+  )
+  if result.modified_count > 0:
+    print(f"📋 Leave status updated to '{new_status}' for {email}")
+  else:
+    print(f"⚠️ Leave request not found for {email} starting on {start_date}")
+
+
+# ==========================================
+# 4. PAYROLL & SALARY OPERATIONS
+# ==========================================
+def generate_payroll(email, month_year, bonus=0, deductions=0):
+  employee = db.employees.find_one({"email": email})
+  if not employee:
+    print(f"❌ Error: Employee with email {email} not found.")
+    return
+
+  base_salary = employee["base_salary"]
+  net_salary = base_salary + bonus - deductions
+
+  payroll_doc = {
+      "email": email,
+      "month_year": month_year,  # e.g., "2026-10"
+      "base_salary": base_salary,
+      "bonus": bonus,
+      "deductions": deductions,
+      "net_salary": net_salary,
+      "payment_status": "Generated",
+      "generated_on": datetime.now().strftime("%Y-%m-%d"),
+  }
+
+  db.payroll.update_one(
+      {"email": email, "month_year": month_year},
+      {"$set": payroll_doc},
+      upsert=True,
+  )
+  print(
+      f"💰 Payroll generated for {email} ({month_year}) | Net Salary:"
+      f" ${net_salary}"
+  )
+
 
 # --- Quick Test Execution ---
 if __name__ == "__main__":
@@ -50,3 +112,18 @@ if __name__ == "__main__":
   print("\nCurrent Employees in Database:")
   for emp in get_all_employees():
     print(emp)
+
+def verify_login(email, password):
+  hashed_password = hashlib.sha256(password.encode()).hexdigest()
+
+  user = db.employees.find_one({"email": email, "password": hashed_password})
+  if user:
+    return{
+      "status":"success",
+      "role":user.get(
+        "role","employee"
+      ),
+      "name":f"{user['first_name']}{user['last_name']}",
+
+    }
+  return{"status":"fail","message":"Invalid email or password"}
