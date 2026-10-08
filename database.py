@@ -11,14 +11,20 @@ db = client["hrms_db"]
 
 
 # --- Employee Operations ---
-def add_employee(first_name, last_name, email, department, salary):
+def add_employee(first_name, last_name, email, department, salary, role = "employee"):
+  
+  joining_date_str = datetime.now().strftime("%Y-%m-%d")
+
+  initial_password_hash = hashlib.sha256(joining_date_str.encode()).hexdigest()
   employee_doc = {
       "first_name": first_name,
       "last_name": last_name,
       "email": email,
       "department": department,
       "base_salary": salary,
-      "joining_date": datetime.now().strftime("%Y-%m-%d"),
+      "joining_date": joining_date_str,
+      "password": initial_password_hash,
+      "role":role,
       "status": "Active",
   }
   result = db.employees.insert_one(employee_doc)
@@ -116,14 +122,14 @@ if __name__ == "__main__":
 def verify_login(email, password):
   hashed_password = hashlib.sha256(password.encode()).hexdigest()
 
-  user = db.employees.find_one({"email": email, "password": hashed_password})
+  user = db.employees.find_one({"email": email})
   if user:
-    return{
-      "status":"success",
-      "role":user.get(
-        "role","employee"
-      ),
-      "name":f"{user['first_name']}{user['last_name']}",
-
-    }
+    stored_password = user.get("password")
+    joining_date = user.get("joining_date")
+    if stored_password == hashed_password or password == joining_date:
+      return{
+        "status": "success",
+        "role": user.get("role","employee"),
+        "name":f"{user.get('first_name', '')} {user.get('last_name', '')}"
+      }
   return{"status":"fail","message":"Invalid email or password"}
