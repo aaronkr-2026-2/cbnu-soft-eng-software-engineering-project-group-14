@@ -133,3 +133,41 @@ def verify_login(email, password):
         "name":f"{user.get('first_name', '')} {user.get('last_name', '')}"
       }
   return{"status":"fail","message":"Invalid email or password"}
+
+# ==========================================
+# 5. NEW ADMIN PANEL HELPER FUNCTIONS
+# ==========================================
+
+def get_employee_attendance_count(email: str):
+    """Counts how many times the employee has clocked in or marked present."""
+    # Counts documents where email matches and action indicates presence
+    return db.attendance.count_documents({"email": email, "$or": [{"action": "Clock In"}, {"action": "Present"}]})
+
+
+def calculate_salary_by_attendance(email: str, daily_rate: float, month_year: str):
+    """Calculates total salary by multiplying total attendance by the daily rate."""
+    total_attendance = get_employee_attendance_count(email)
+    total_salary = total_attendance * daily_rate
+    
+    payroll_doc = {
+        "email": email,
+        "month_year": month_year,
+        "daily_rate": daily_rate,
+        "total_attendance": total_attendance,
+        "total_salary": total_salary,
+        "payment_status": "Calculated",
+        "generated_on": datetime.now().strftime("%Y-%m-%d")
+    }
+    
+    db.payroll.update_one(
+        {"email": email, "month_year": month_year},
+        {"$set": payroll_doc},
+        upsert=True
+    )
+    print(f"💰 Calculated salary for {email}: {total_attendance} days × ${daily_rate} = ${total_salary}")
+    return total_salary
+
+
+def get_pending_leaves():
+    """Fetches all pending leave requests so the admin can view reasons instantly."""
+    return list(db.leaves.find({"status": "Pending"}))
