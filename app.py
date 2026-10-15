@@ -1,209 +1,256 @@
-import datetime
-from google import genai
-import pandas as pd
-import streamlit as st
-
-# Initialize GenAI Client (Make sure to set your GEMINI_API_KEY environment variable)
-# client = genai.Client()
-
-st.set_page_config(
-    page_title="HRMS MVP Dashboard", page_icon="👥", layout="wide"
+from bson import ObjectId
+from database import (
+    add_employee,
+    calculate_salary_by_attendance,
+    db,
+    get_all_employees,
+    get_pending_leaves,
+    update_leave_status,
+    verify_login,
 )
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
-# Initialize Mock Data in Streamlit Session State
-if "employees" not in st.session_state:
-  st.session_state.employees = [
-      {
-          "id": 1,
-          "name": "Alice Smith",
-          "department": "Engineering",
-          "salary": 75000,
-      },
-      {
-          "id": 2,
-          "name": "Bob Jones",
-          "department": "HR",
-          "salary": 60000,
-      },
-      {
-          "id": 3,
-          "name": "Charlie Brown",
-          "department": "Marketing",
-          "salary": 65000,
-      },
-  ]
+app = FastAPI()
 
-if "attendance" not in st.session_state:
-  st.session_state.attendance = []
 
-if "leaves" not in st.session_state:
-  st.session_state.leaves = []
+# 1. Home / Login Page Route
+@app.get("/", response_class=HTMLResponse)
+def login_page():
+    return """
+    <html>
+        <head>
+            <title>HRMS Login</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .card { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 350px; }
+                h2 { text-align: center; color: #333; margin-bottom: 25px; }
+                input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+                button { width: 100%; padding: 12px; background-color: #4f46e5; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; }
+                button:hover { background-color: #4338ca; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>HRMS Login</h2>
+                <form action="/login" method="POST">
+                    <input type="email" name="email" placeholder="Email Address" required>
+                    <input type="password" name="password" placeholder="Password" required>
+                    <button type="submit">Sign In</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """
 
-st.title("🚀 AI-Powered HRMS Mini MVP")
-st.markdown(
-    "A lightweight prototype tracking employees, attendance, and an AI HR"
-    " Assistant."
-)
 
-# Navigation Tabs
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["👥 Employees", "⏰ Attendance", "🏖️ Leave Requests", "🤖 AI HR Chatbot"]
-)
+# 2. Handle Login Submission & Routing
+@app.post("/login", response_class=HTMLResponse)
+def login_user(email: str = Form(...), password: str = Form(...)):
+    result = verify_login(email, password)
 
-# ----------------------------------------------------
-# TAB 1: EMPLOYEE DIRECTORY & PROFILES
-# ----------------------------------------------------
-with tab1:
-  st.header("Employee Directory")
+    if result["status"] == "success":
+        role = result["role"]
+        name = result["name"]
 
-  # Display current employees
-  df_employees = pd.DataFrame(st.session_state.employees)
-  st.dataframe(df_employees, use_container_width=True)
-
-  st.subheader("Add New Employee")
-  with st.form("add_employee_form"):
-    name = st.text_input("Full Name")
-    department = st.selectbox(
-        "Department", ["Engineering", "HR", "Marketing", "Sales", "Finance"]
-    )
-    salary = st.number_input("Base Salary ($)", min_value=30000, step=5000)
-    submitted = st.form_submit_button("Add Employee")
-
-    if submitted and name:
-      new_id = (
-          max([e["id"] for e in st.session_state.employees]) + 1
-          if st.session_state.employees
-          else 1
-      )
-      st.session_state.employees.append(
-          {"id": new_id, "name": name, "department": department, "salary": salary}
-      )
-      st.success(f"Employee {name} added successfully!")
-      st.rerun()
-
-# ----------------------------------------------------
-# TAB 2: ATTENDANCE SIMULATOR
-# ----------------------------------------------------
-with tab2:
-  st.header("Attendance Tracker")
-
-  if not st.session_state.employees:
-    st.warning("Please add an employee first.")
-  else:
-    emp_names = [e["name"] for e in st.session_state.employees]
-    selected_emp = st.selectbox("Select Employee", emp_names, key="att_emp")
-
-    col1, col2 = st.columns(2)
-    with col1:
-      if st.button("Clock In"):
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.session_state.attendance.append({
-            "Employee": selected_emp,
-            "Action": "Clock In",
-            "Time": now,
-        })
-        st.success(f"{selected_emp} clocked in at {now}")
-
-    with col2:
-      if st.button("Clock Out"):
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.session_state.attendance.append({
-            "Employee": selected_emp,
-            "Action": "Clock Out",
-            "Time": now,
-        })
-        st.info(f"{selected_emp} clocked out at {now}")
-
-    st.subheader("Today's Attendance Log")
-    if st.session_state.attendance:
-      st.dataframe(
-          pd.DataFrame(st.session_state.attendance), use_container_width=True
-      )
+        if role == "admin":
+            return RedirectResponse(url="/admin/dashboard", status_code=303)
+        else:
+            return f"""
+                <div style="font-family:Arial; padding: 40px; text-align: center;">
+                    <h1 style="color: #2563eb;">👤 Employee Portal</h1>
+                    <p>Welcome back, <b>{name}</b>!</p>
+                    <hr style="max-width: 500px; margin: 20px auto;">
+                    <p>Here you can view your attendance and request leaves.</p>
+                </div>
+            """
     else:
-      st.info("No attendance records yet today.")
+        return """
+        <div style="font-family:Arial; padding: 40px; text-align: center;">
+            <h2 style="color: #dc2626;">❌ Invalid Email or Password</h2>
+            <a href="/" style="color: #2563eb; text-decoration: none;">← Try Again</a>
+        </div>
+        """
 
-# ----------------------------------------------------
-# TAB 3: LEAVE MANAGEMENT
-# ----------------------------------------------------
-with tab3:
-  st.header("Leave Requests")
 
-  with st.form("leave_form"):
-    emp_names = [e["name"] for e in st.session_state.employees]
-    leave_emp = st.selectbox("Employee Name", emp_names, key="leave_emp")
-    leave_type = st.selectbox(
-        "Leave Type", ["Casual Leave", "Sick Leave", "Annual Leave"]
+# ==========================================
+# 3. ADMIN DASHBOARD (3 Core Sections)
+# ==========================================
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+def admin_dashboard():
+    employees = get_all_employees()
+    pending_leaves = get_pending_leaves()
+
+    # Build employee option dropdown for salary calculation
+    employee_options = "".join(
+        [
+            f'<option value="{emp["email"]}">{emp["first_name"]} {emp["last_name"]} ({emp["email"]})</option>'
+            for emp in employees
+        ]
     )
-    start_date = st.date_input("Start Date")
-    end_date = st.date_input("End Date")
-    reason = st.text_area("Reason")
-    leave_submitted = st.form_submit_button("Submit Request")
 
-    if leave_submitted:
-      st.session_state.leaves.append({
-          "Employee": leave_emp,
-          "Type": leave_type,
-          "From": str(start_date),
-          "To": str(end_date),
-          "Reason": reason,
-          "Status": "Pending",
-      })
-      st.success("Leave request submitted successfully!")
-
-  st.subheader("Submitted Leave Requests")
-  if st.session_state.leaves:
-    st.dataframe(
-        pd.DataFrame(st.session_state.leaves), use_container_width=True
-    )
-  else:
-    st.info("No leave requests found.")
-
-# ----------------------------------------------------
-# TAB 4: AI HR CHATBOT
-# ----------------------------------------------------
-with tab4:
-  st.header("🤖 AI HR Assistant")
-  st.markdown(
-      "Ask questions about company data, employee headcount, or general HR"
-      " queries."
-  )
-
-  user_query = st.text_input(
-      "Ask your HR assistant something:",
-      placeholder="e.g., How many employees do we have in Engineering?",
-  )
-
-  if st.button("Ask AI"):
-    if not user_query:
-      st.warning("Please enter a question.")
+    # Build leave requests table rows
+    leave_rows = ""
+    if pending_leaves:
+        for leave in pending_leaves:
+            leave_rows += f"""
+                <tr>
+                    <td>{leave.get("email")}</td>
+                    <td><strong>{leave.get("reason")}</strong></td>
+                    <td>{leave.get("start_date")} to {leave.get("end_date")}</td>
+                    <td>
+                        <form action="/admin/leave-action" method="POST" style="display:inline;">
+                            <input type="hidden" name="leave_id" value="{leave.get("_id")}">
+                            <input type="hidden" name="action" value="Approved">
+                            <button type="submit" style="background: #16a34a; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 3px;">Approve</button>
+                        </form>
+                        <form action="/admin/leave-action" method="POST" style="display:inline;">
+                            <input type="hidden" name="leave_id" value="{leave.get("_id")}">
+                            <input type="hidden" name="action" value="Rejected">
+                            <button type="submit" style="background: #dc2626; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 3px;">Reject</button>
+                        </form>
+                    </td>
+                </tr>
+            """
     else:
-      with st.spinner("Thinking..."):
-        # Compile current mock database state to pass context to the LLM
-        context_data = f"""
-                Current Employees: {st.session_state.employees}
-                Attendance Logs: {st.session_state.attendance}
-                Leave Requests: {st.session_state.leaves}
-                """
+        leave_rows = '<tr><td colspan="4" style="text-align: center; color: #777;">No pending leave requests at the moment.</td></tr>'
 
-        prompt = f"""
-                You are a helpful HR management assistant. Answer the user's question based strictly on the provided company state data below. If you don't know, say you don't know.
-                
-                Company Data Context:
-                {context_data}
-                
-                User Question: {user_query}
-                """
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>HRMS Admin Dashboard</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 30px; background: #f4f7f6; }}
+            .section {{ background: white; padding: 25px; margin-bottom: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }}
+            h1 {{ color: #1e293b; }}
+            h2 {{ color: #0f172a; border-bottom: 2px solid #2563eb; padding-bottom: 8px; margin-top: 0; }}
+            form div {{ margin-bottom: 12px; }}
+            label {{ display: block; font-weight: bold; margin-bottom: 5px; color: #475569; }}
+            input, select {{ width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 5px; box-sizing: border-box; }}
+            button.btn {{ background: #2563eb; color: white; border: none; padding: 10px 15px; cursor: pointer; border-radius: 5px; font-weight: bold; }}
+            button.btn:hover {{ background: #1d4ed8; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            th, td {{ border: 1px solid #e2e8f0; padding: 10px; text-align: left; }}
+            th {{ background-color: #f8fafc; color: #334155; }}
+        </style>
+    </head>
+    <body>
 
-        try:
-          # Using the standard Google GenAI client call
-          client = genai.Client()
-          response = client.models.generate_content(
-              model="gemini-2.5-flash", contents=prompt
-          )
-          st.success("AI Response:")
-          st.write(response.text)
-        except Exception as e:
-          st.error(
-              f"Error connecting to AI API. Ensure your GEMINI_API_KEY is"
-              f" set. Details: {e}"
-          )
+        <h1>🛡️ Admin Control Panel</h1>
+        <p><a href="/" style="color: #2563eb; text-decoration: none;">← Logout / Home</a></p>
+
+        <!-- SECTION 1: Add New Employee Form -->
+        <div class="section">
+            <h2>1. Add New Employee</h2>
+            <form action="/admin/add-employee" method="POST">
+                <div>
+                    <label>First Name:</label>
+                    <input type="text" name="first_name" required>
+                </div>
+                <div>
+                    <label>Last Name:</label>
+                    <input type="text" name="last_name" required>
+                </div>
+                <div>
+                    <label>Email Address:</label>
+                    <input type="email" name="email" required>
+                </div>
+                <div>
+                    <label>Department:</label>
+                    <input type="text" name="department" required>
+                </div>
+                <div>
+                    <label>Base Salary ($):</label>
+                    <input type="number" name="salary" required>
+                </div>
+                <button type="submit" class="btn">Register Employee</button>
+            </form>
+        </div>
+
+        <!-- SECTION 2: Attendance & Salary Calculation -->
+        <div class="section">
+            <h2>2. Attendance & Salary Calculation</h2>
+            <form action="/admin/calculate-salary" method="POST">
+                <div>
+                    <label>Select Employee:</label>
+                    <select name="email" required>
+                        {employee_options}
+                    </select>
+                </div>
+                <div>
+                    <label>Daily Salary Rate ($):</label>
+                    <input type="number" step="0.01" name="daily_rate" required placeholder="e.g., 50.00">
+                </div>
+                <div>
+                    <label>Month & Year (e.g., 2026-10):</label>
+                    <input type="text" name="month_year" value="2026-10" required>
+                </div>
+                <button type="submit" class="btn">Calculate Total Salary (Attendance × Daily Rate)</button>
+            </form>
+        </div>
+
+        <!-- SECTION 3: Leave Requests Management -->
+        <div class="section">
+            <h2>3. Pending Leave Requests</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Employee Email</th>
+                        <th>Reason / Short Message</th>
+                        <th>Dates</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {leave_rows}
+                </tbody>
+            </table>
+        </div>
+
+    </body>
+    </html>
+    """
+
+
+# 4. Handle Adding Employee Form Submission
+@app.post("/admin/add-employee", response_class=HTMLResponse)
+def handle_add_employee(
+    first_name: str = Form(...),
+    last_name: str = Form(...),
+    email: str = Form(...),
+    department: str = Form(...),
+    salary: float = Form(...),
+):
+    add_employee(first_name, last_name, email, department, salary)
+    return """
+        <div style="font-family:Arial; padding: 40px; text-align: center;">
+            <h2 style="color: #16a34a;">✅ Employee Added Successfully!</h2>
+            <a href="/admin/dashboard" style="color: #2563eb; text-decoration: none;">← Back to Admin Dashboard</a>
+        </div>
+    """
+
+
+# 5. Handle Salary Calculation Form Submission
+@app.post("/admin/calculate-salary", response_class=HTMLResponse)
+def handle_calculate_salary(
+    email: str = Form(...), daily_rate: float = Form(...), month_year: str = Form(...)
+):
+    total_salary = calculate_salary_by_attendance(email, daily_rate, month_year)
+    return f"""
+        <div style="font-family:Arial; padding: 40px; text-align: center;">
+            <h2 style="color: #16a34a;">💰 Salary Calculated Successfully!</h2>
+            <p>Total Net Salary Computed: <b>${total_salary}</b></p>
+            <a href="/admin/dashboard" style="color: #2563eb; text-decoration: none;">← Back to Admin Dashboard</a>
+        </div>
+    """
+
+
+# 6. Handle Leave Approval / Rejection
+@app.post("/admin/leave-action", response_class=HTMLResponse)
+def handle_leave_action(leave_id: str = Form(...), action: str = Form(...)):
+    db.leaves.update_one(
+        {"_id": ObjectId(leave_id)}, {"$set": {"status": action}}
+    )
+    return RedirectResponse(url="/admin/dashboard", status_code=303)

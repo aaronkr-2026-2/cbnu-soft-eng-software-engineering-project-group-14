@@ -12,3 +12,30 @@ Every time you update your project, please make a note of what you did in the `A
 **Something the AI got wrong that I had to catch:** None
 
 ---
+# AI Collaboration Log (AI_LOG.md) - [2026-10-08]
+
+## 1. Tools and Prompts
+* **Tools Used:** Gemini personal AI collaborator.
+* **Key Prompts:** 
+  * "How can I make initial user passwords default to their joining date in `database.py`?"
+  * "How do I structure `SPRINT_01.md` to match my professor's agile homework requirements?"
+
+## 2. What Was Retained or Changed
+* **Retained:** The FastAPI routing and the Python logic separating the MongoDB query by email to allow flexible password/joining-date validation.
+* **Changed:** Adjusted default role assignments to strictly enforce the Principle of Least Privilege (`role="employee"` by default).
+
+## 3. Errors Caught
+* **Issue:** FastAPI form handling threw a 422 error because `python-multipart` was missing when parsing HTML form inputs.
+* **Resolution:** Installed `python-multipart` via pip in the terminal.
+
+## 4. One Decision the Team Can Explain Without AI
+* **Decision:** Using SHA-256 for password hashing alongside a clear joining-date fallback mechanism. 
+* **Explanation:** Storing plain text passwords is a security risk. Hashing provides basic protection, while allowing the joining date as a temporary initial password solves the onboarding problem for brand-new employees before they set their custom passwords.
+
+
+## HRMS Admin Dashboard & System Architecture — [2026-10-15]
+**Tool(s) used:** Gemini
+**What I asked for:** Assistance in building the FastAPI Admin Panel (employee registration, attendance-based salary multiplication, and leave request management), integrating Jinja2 templates, updating MongoDB functions, and structuring architecture files (`architecture.md`, `architecture.png`).
+**What I kept as-is:** The foundational FastAPI route handlers, PyMongo database integration logic, and the structural layout of the Jinja2 `admin.html` dashboard.
+**What I changed or rejected, and why:** Adapted form parameter names and password fallback criteria to align seamlessly with existing database authentication handlers (`verify_login`) and group repository guidelines.
+**Something the AI got wrong that I had to catch:** Initially included shell-specific syntax for MongoDB Compass document entries that needed to be formatted into standard JSON for proper insertion.
