@@ -1,4 +1,11 @@
+import os
+from datetime import datetime
 from bson import ObjectId
+from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
+
 from database import (
     add_employee,
     calculate_salary_by_attendance,
@@ -7,11 +14,21 @@ from database import (
     get_pending_leaves,
     update_leave_status,
     verify_login,
+    mark_attendance,
+    submit_leave_request,
 )
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
+
+# Required so request.session works properly!
+app.add_middleware(SessionMiddleware, secret_key="your-super-secret-key-change-me")
+
+# Directory to store uploaded PDFs
+UPLOAD_DIR = "static/notices"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Mount static files so /static/notices/ links work properly
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # 1. Home / Login Page Route
@@ -46,24 +63,26 @@ def login_page():
 
 # 2. Handle Login Submission & Routing
 @app.post("/login", response_class=HTMLResponse)
-def login_user(email: str = Form(...), password: str = Form(...)):
+def login_user(request: Request, email: str = Form(...), password: str = Form(...)):
     result = verify_login(email, password)
 
     if result["status"] == "success":
         role = result["role"]
         name = result["name"]
 
+        # Save user session info
+        request.session["user"] = {
+            "email": email,
+            "name": name,
+            "role": role,
+            "first_name": name.split()[0] if name else "User",
+            "last_name": name.split()[-1] if len(name.split()) > 1 else ""
+        }
+
         if role == "admin":
             return RedirectResponse(url="/admin/dashboard", status_code=303)
         else:
-            return f"""
-                <div style="font-family:Arial; padding: 40px; text-align: center;">
-                    <h1 style="color: #2563eb;">👤 Employee Portal</h1>
-                    <p>Welcome back, <b>{name}</b>!</p>
-                    <hr style="max-width: 500px; margin: 20px auto;">
-                    <p>Here you can view your attendance and request leaves.</p>
-                </div>
-            """
+            return RedirectResponse(url="/employee/dashboard", status_code=303)
     else:
         return """
         <div style="font-family:Arial; padding: 40px; text-align: center;">
@@ -73,15 +92,21 @@ def login_user(email: str = Form(...), password: str = Form(...)):
         """
 
 
+# 3. Logout Route
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/", status_code=303)
+
+
 # ==========================================
-# 3. ADMIN DASHBOARD (3 Core Sections)
+# 4. ADMIN DASHBOARD
 # ==========================================
 @app.get("/admin/dashboard", response_class=HTMLResponse)
 def admin_dashboard():
     employees = get_all_employees()
     pending_leaves = get_pending_leaves()
 
-    # Build employee option dropdown for salary calculation
     employee_options = "".join(
         [
             f'<option value="{emp["email"]}">{emp["first_name"]} {emp["last_name"]} ({emp["email"]})</option>'
@@ -89,7 +114,6 @@ def admin_dashboard():
         ]
     )
 
-    # Build leave requests table rows
     leave_rows = ""
     if pending_leaves:
         for leave in pending_leaves:
@@ -139,32 +163,17 @@ def admin_dashboard():
     <body>
 
         <h1>🛡️ Admin Control Panel</h1>
-        <p><a href="/" style="color: #2563eb; text-decoration: none;">← Logout / Home</a></p>
+        <p><a href="/logout" style="color: #dc2626; text-decoration: none; font-weight: bold;">← Logout</a></p>
 
         <!-- SECTION 1: Add New Employee Form -->
         <div class="section">
             <h2>1. Add New Employee</h2>
             <form action="/admin/add-employee" method="POST">
-                <div>
-                    <label>First Name:</label>
-                    <input type="text" name="first_name" required>
-                </div>
-                <div>
-                    <label>Last Name:</label>
-                    <input type="text" name="last_name" required>
-                </div>
-                <div>
-                    <label>Email Address:</label>
-                    <input type="email" name="email" required>
-                </div>
-                <div>
-                    <label>Department:</label>
-                    <input type="text" name="department" required>
-                </div>
-                <div>
-                    <label>Base Salary ($):</label>
-                    <input type="number" name="salary" required>
-                </div>
+                <div><label>First Name:</label><input type="text" name="first_name" required></div>
+                <div><label>Last Name:</label><input type="text" name="last_name" required></div>
+                <div><label>Email Address:</label><input type="email" name="email" required></div>
+                <div><label>Department:</label><input type="text" name="department" required></div>
+                <div><label>Base Salary ($):</label><input type="number" name="salary" required></div>
                 <button type="submit" class="btn">Register Employee</button>
             </form>
         </div>
@@ -175,19 +184,11 @@ def admin_dashboard():
             <form action="/admin/calculate-salary" method="POST">
                 <div>
                     <label>Select Employee:</label>
-                    <select name="email" required>
-                        {employee_options}
-                    </select>
+                    <select name="email" required>{employee_options}</select>
                 </div>
-                <div>
-                    <label>Daily Salary Rate ($):</label>
-                    <input type="number" step="0.01" name="daily_rate" required placeholder="e.g., 50.00">
-                </div>
-                <div>
-                    <label>Month & Year (e.g., 2026-10):</label>
-                    <input type="text" name="month_year" value="2026-10" required>
-                </div>
-                <button type="submit" class="btn">Calculate Total Salary (Attendance × Daily Rate)</button>
+                <div><label>Daily Salary Rate ($):</label><input type="number" step="0.01" name="daily_rate" required placeholder="e.g., 50.00"></div>
+                <div><label>Month & Year:</label><input type="text" name="month_year" value="2026-10" required></div>
+                <button type="submit" class="btn">Calculate Total Salary</button>
             </form>
         </div>
 
@@ -196,17 +197,20 @@ def admin_dashboard():
             <h2>3. Pending Leave Requests</h2>
             <table>
                 <thead>
-                    <tr>
-                        <th>Employee Email</th>
-                        <th>Reason / Short Message</th>
-                        <th>Dates</th>
-                        <th>Action</th>
-                    </tr>
+                    <tr><th>Employee Email</th><th>Reason</th><th>Dates</th><th>Action</th></tr>
                 </thead>
-                <tbody>
-                    {leave_rows}
-                </tbody>
+                <tbody>{leave_rows}</tbody>
             </table>
+        </div>
+
+        <!-- SECTION 4: Upload PDF Notices -->
+        <div class="section">
+            <h2>4. Upload Notice (PDF)</h2>
+            <form action="/admin/upload-notice" method="POST" enctype="multipart/form-data">
+                <div><label>Notice Title:</label><input type="text" name="title" required placeholder="e.g. Public Holiday Notice"></div>
+                <div><label>PDF File:</label><input type="file" name="file" accept="application/pdf" required></div>
+                <button type="submit" class="btn">Upload Notice PDF</button>
+            </form>
         </div>
 
     </body>
@@ -214,15 +218,11 @@ def admin_dashboard():
     """
 
 
-# 4. Handle Adding Employee Form Submission
+# ==========================================
+# 5. ADMIN ACTIONS & HANDLERS
+# ==========================================
 @app.post("/admin/add-employee", response_class=HTMLResponse)
-def handle_add_employee(
-    first_name: str = Form(...),
-    last_name: str = Form(...),
-    email: str = Form(...),
-    department: str = Form(...),
-    salary: float = Form(...),
-):
+def handle_add_employee(first_name: str = Form(...), last_name: str = Form(...), email: str = Form(...), department: str = Form(...), salary: float = Form(...)):
     add_employee(first_name, last_name, email, department, salary)
     return """
         <div style="font-family:Arial; padding: 40px; text-align: center;">
@@ -232,11 +232,8 @@ def handle_add_employee(
     """
 
 
-# 5. Handle Salary Calculation Form Submission
 @app.post("/admin/calculate-salary", response_class=HTMLResponse)
-def handle_calculate_salary(
-    email: str = Form(...), daily_rate: float = Form(...), month_year: str = Form(...)
-):
+def handle_calculate_salary(email: str = Form(...), daily_rate: float = Form(...), month_year: str = Form(...)):
     total_salary = calculate_salary_by_attendance(email, daily_rate, month_year)
     return f"""
         <div style="font-family:Arial; padding: 40px; text-align: center;">
@@ -247,10 +244,138 @@ def handle_calculate_salary(
     """
 
 
-# 6. Handle Leave Approval / Rejection
 @app.post("/admin/leave-action", response_class=HTMLResponse)
 def handle_leave_action(leave_id: str = Form(...), action: str = Form(...)):
-    db.leaves.update_one(
-        {"_id": ObjectId(leave_id)}, {"$set": {"status": action}}
-    )
+    db.leaves.update_one({"_id": ObjectId(leave_id)}, {"$set": {"status": action}})
     return RedirectResponse(url="/admin/dashboard", status_code=303)
+
+
+@app.post("/admin/upload-notice")
+async def upload_notice(request: Request, title: str = Form(...), file: UploadFile = File(...)):
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    with open(file_path, "wb") as buffer:
+        buffer.write(await file.read())
+    
+    db.notices.insert_one({
+        "title": title,
+        "filename": file.filename,
+        "file_path": f"/static/notices/{file.filename}",
+        "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+    })
+    return RedirectResponse(url="/admin/dashboard", status_code=303)
+
+
+@app.get("/notices/download/{filename}")
+async def download_notice(filename: str):
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type='application/octet-stream', filename=filename)
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+# ==========================================
+# 6. EMPLOYEE PORTAL & ACTIONS
+# ==========================================
+@app.get("/employee/dashboard", response_class=HTMLResponse)
+async def employee_dashboard(request: Request):
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/", status_code=303)
+    
+    notices = list(db.notices.find().sort("uploaded_at", -1))
+    
+    notice_rows = ""
+    if notices:
+        for notice in notices:
+            notice_rows += f"""
+                <tr>
+                    <td>{notice.get("title")}</td>
+                    <td>{notice.get("uploaded_at")}</td>
+                    <td><a href="{notice.get("file_path")}" target="_blank" style="background: #2563eb; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">Download PDF</a></td>
+                </tr>
+            """
+    else:
+        notice_rows = '<tr><td colspan="3" style="text-align: center; color: #777;">No notices available right now.</td></tr>'
+
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Employee Portal - HRMS</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 30px; background: #f4f7f6; }}
+            .container {{ max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }}
+            h2 {{ color: #0f172a; border-bottom: 2px solid #2563eb; padding-bottom: 8px; }}
+            .section {{ margin-bottom: 30px; }}
+            button, .btn {{ background: #2563eb; color: white; border: none; padding: 10px 15px; cursor: pointer; border-radius: 5px; font-weight: bold; }}
+            button:hover, .btn:hover {{ background: #1d4ed8; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            th, td {{ border: 1px solid #e2e8f0; padding: 10px; text-align: left; }}
+            th {{ background-color: #f8fafc; color: #334155; }}
+            input {{ width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 5px; box-sizing: border-box; margin-bottom: 10px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <a href="/logout" style="float: right; color: #dc2626; text-decoration: none; font-weight: bold;">Logout</a>
+            <h2>👤 Employee Portal</h2>
+            <p>Welcome back, <b>{user.get("name")}</b>!</p>
+            <hr style="margin: 20px 0;">
+
+            <!-- 1. Attendance Section -->
+            <div class="section">
+                <h3>Time & Attendance</h3>
+                <form action="/employee/clock-in" method="POST">
+                    <button type="submit">Clock In Today</button>
+                </form>
+            </div>
+
+            <!-- 2. Leave Request Section -->
+            <div class="section">
+                <h3>Request Leave</h3>
+                <form action="/employee/request-leave" method="POST">
+                    <label>Start Date:</label>
+                    <input type="date" name="start_date" required>
+                    <label>End Date:</label>
+                    <input type="date" name="end_date" required>
+                    <label>Reason / Message:</label>
+                    <input type="text" name="reason" required placeholder="e.g. Medical Leave">
+                    <button type="submit">Submit Leave Request</button>
+                </form>
+            </div>
+
+            <!-- 3. Notice Board Section -->
+            <div class="section">
+                <h3>Notice Board & Announcements</h3>
+                <table>
+                    <thead>
+                        <tr><th>Title</th><th>Date Posted</th><th>Action</th></tr>
+                    </thead>
+                    <tbody>
+                        {notice_rows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.post("/employee/clock-in")
+async def employee_clock_in(request: Request):
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/", status_code=303)
+    mark_attendance(db, user["email"])
+    return RedirectResponse(url="/employee/dashboard", status_code=303)
+
+
+@app.post("/employee/request-leave")
+async def request_leave(request: Request, start_date: str = Form(...), end_date: str = Form(...), reason: str = Form(...)):
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/", status_code=303)
+    submit_leave_request(db, user["email"], start_date, end_date, reason)
+    return RedirectResponse(url="/employee/dashboard", status_code=303)
