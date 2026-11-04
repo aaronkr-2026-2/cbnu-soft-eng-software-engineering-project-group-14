@@ -2,10 +2,9 @@ from datetime import datetime
 from pymongo import MongoClient
 import hashlib
 
-# 1. Connect to MongoDB (local or Atlas URI)
-# If running locally with default port, use "mongodb://localhost:27017/"
-client = MongoClient("mongodb://localhost:27017/")
 
+Mongo_url = "mongodb+srv://atikuzzamanemon4_db_user:Atik.zaman.99@cluster0.nwgr32l.mongodb.net/"
+client = MongoClient(Mongo_url)
 # 2. Create/Access the database
 db = client["hrms_db"]
 
@@ -171,3 +170,51 @@ def calculate_salary_by_attendance(email: str, daily_rate: float, month_year: st
 def get_pending_leaves():
     """Fetches all pending leave requests so the admin can view reasons instantly."""
     return list(db.leaves.find({"status": "Pending"}))
+
+
+from datetime import datetime
+from bson import ObjectId
+
+# --- Notice Board Helpers ---
+def insert_notice(db, title, filename, file_path):
+    notice_doc = {
+        "title": title,
+        "filename": filename,
+        "file_path": file_path,
+        "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
+    return db.notices.insert_one(notice_doc)
+
+def get_all_notices(db):
+    return list(db.notices.find().sort("uploaded_at", -1))
+
+# --- Attendance Helpers ---
+def mark_attendance(db, email):
+    today = datetime.now().strftime("%Y-%m-%d")
+    existing = db.attendance.find_one({"email": email, "date": today})
+    if not existing:
+        db.attendance.insert_one({
+            "email": email, 
+            "date": today, 
+            "status": "Present", 
+            "time": datetime.now().strftime("%H:%M:%S")
+        })
+        return True
+    return False
+
+def get_employee_attendance(db, email):
+    return list(db.attendance.find({"email": email}).sort("date", -1))
+
+# --- Leave Helpers ---
+def submit_leave_request(db, email, start_date, end_date, reason):
+    leave_doc = {
+        "email": email,
+        "start_date": start_date,
+        "end_date": end_date,
+        "reason": reason,
+        "status": "Pending"
+    }
+    return db.leaves.insert_one(leave_doc)
+
+def get_employee_leaves(db, email):
+    return list(db.leaves.find({"email": email}))
