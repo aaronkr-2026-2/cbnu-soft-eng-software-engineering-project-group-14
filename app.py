@@ -2,17 +2,15 @@ import os
 from datetime import datetime
 from bson import ObjectId
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from database import (
     add_employee,
-    calculate_salary_by_attendance,
     db,
     get_all_employees,
     get_pending_leaves,
-    update_leave_status,
     verify_login,
     mark_attendance,
     submit_leave_request,
@@ -106,6 +104,7 @@ def logout(request: Request):
 def admin_dashboard():
     employees = get_all_employees()
     pending_leaves = get_pending_leaves()
+    all_attendance = list(db.attendance.find().sort("timestamp", -1))
 
     employee_options = "".join(
         [
@@ -138,6 +137,19 @@ def admin_dashboard():
             """
     else:
         leave_rows = '<tr><td colspan="4" style="text-align: center; color: #777;">No pending leave requests at the moment.</td></tr>'
+
+    attendance_rows = ""
+    if all_attendance:
+        for att in all_attendance:
+            attendance_rows += f"""
+                <tr>
+                    <td>{att.get("email")}</td>
+                    <td>{att.get("date", "N/A")}</td>
+                    <td>{att.get("time", att.get("timestamp", "N/A"))}</td>
+                </tr>
+            """
+    else:
+        attendance_rows = '<tr><td colspan="3" style="text-align: center; color: #777;">No attendance records found.</td></tr>'
 
     return f"""
     <!DOCTYPE html>
@@ -173,7 +185,7 @@ def admin_dashboard():
                 <div><label>Last Name:</label><input type="text" name="last_name" required></div>
                 <div><label>Email Address:</label><input type="email" name="email" required></div>
                 <div><label>Department:</label><input type="text" name="department" required></div>
-                <div><label>Base Salary ($):</label><input type="number" name="salary" required></div>
+                <div><label>Base Salary ($):</label><input type="number" name="salary" required placeholder="e.g., 3000"></div>
                 <button type="submit" class="btn">Register Employee</button>
             </form>
         </div>
@@ -186,15 +198,25 @@ def admin_dashboard():
                     <label>Select Employee:</label>
                     <select name="email" required>{employee_options}</select>
                 </div>
-                <div><label>Daily Salary Rate ($):</label><input type="number" step="0.01" name="daily_rate" required placeholder="e.g., 50.00"></div>
                 <div><label>Month & Year:</label><input type="text" name="month_year" value="2026-10" required></div>
                 <button type="submit" class="btn">Calculate Total Salary</button>
             </form>
         </div>
 
-        <!-- SECTION 3: Leave Requests Management -->
+        <!-- SECTION 3: Employee Attendance Records -->
         <div class="section">
-            <h2>3. Pending Leave Requests</h2>
+            <h2>3. Employee Attendance Logs</h2>
+            <table>
+                <thead>
+                    <tr><th>Employee Email</th><th>Date</th><th>Check-in Time</th></tr>
+                </thead>
+                <tbody>{attendance_rows}</tbody>
+            </table>
+        </div>
+
+        <!-- SECTION 4: Leave Requests Management -->
+        <div class="section">
+            <h2>4. Pending Leave Requests</h2>
             <table>
                 <thead>
                     <tr><th>Employee Email</th><th>Reason</th><th>Dates</th><th>Action</th></tr>
@@ -203,9 +225,9 @@ def admin_dashboard():
             </table>
         </div>
 
-        <!-- SECTION 4: Upload PDF Notices -->
+        <!-- SECTION 5: Upload PDF Notices -->
         <div class="section">
-            <h2>4. Upload Notice (PDF)</h2>
+            <h2>5. Upload Notice (PDF)</h2>
             <form action="/admin/upload-notice" method="POST" enctype="multipart/form-data">
                 <div><label>Notice Title:</label><input type="text" name="title" required placeholder="e.g. Public Holiday Notice"></div>
                 <div><label>PDF File:</label><input type="file" name="file" accept="application/pdf" required></div>
@@ -233,11 +255,30 @@ def handle_add_employee(first_name: str = Form(...), last_name: str = Form(...),
 
 
 @app.post("/admin/calculate-salary", response_class=HTMLResponse)
-def handle_calculate_salary(email: str = Form(...), daily_rate: float = Form(...), month_year: str = Form(...)):
-    total_salary = calculate_salary_by_attendance(email, daily_rate, month_year)
+def handle_calculate_salary(email: str = Form(...), month_year: str = Form(...)):
+    # Fetch employee to display their name and base salary directly
+    employee = db.employees.find_one({"email": email})
+    if not employee:
+        return """
+            <div style="font-family:Arial; padding: 40px; text-align: center;">
+                <h2 style="color: #dc2626;">❌ Employee Not Found</h2>
+                <a href="/admin/dashboard" style="color: #2563eb; text-decoration: none;">← Back to Admin Dashboard</a>
+            </div>
+        """
+    
+    # Get base salary safely (supporting both 'base_salary' and old 'salary' fields)
+    base_salary = float(employee.get("base_salary", employee.get("salary", 0)))
+    
+    # Count attendance and compute total
+    attendance_count = db.attendance.count_documents({"email": email})
+    total_salary = base_salary * attendance_count
+
     return f"""
         <div style="font-family:Arial; padding: 40px; text-align: center;">
             <h2 style="color: #16a34a;">💰 Salary Calculated Successfully!</h2>
+            <p>Employee: <b>{employee.get('first_name')} {employee.get('last_name')}</b></p>
+            <p>Stored Base Salary: <b>${base_salary}</b></p>
+            <p>Total Attendance Days: <b>{attendance_count}</b></p>
             <p>Total Net Salary Computed: <b>${total_salary}</b></p>
             <a href="/admin/dashboard" style="color: #2563eb; text-decoration: none;">← Back to Admin Dashboard</a>
         </div>
@@ -282,7 +323,9 @@ async def employee_dashboard(request: Request):
     if not user:
         return RedirectResponse(url="/", status_code=303)
     
+    user_email = user["email"]
     notices = list(db.notices.find().sort("uploaded_at", -1))
+    my_attendance = list(db.attendance.find({"email": user_email}).sort("timestamp", -1))
     
     notice_rows = ""
     if notices:
@@ -296,6 +339,18 @@ async def employee_dashboard(request: Request):
             """
     else:
         notice_rows = '<tr><td colspan="3" style="text-align: center; color: #777;">No notices available right now.</td></tr>'
+
+    attendance_rows = ""
+    if my_attendance:
+        for att in my_attendance:
+            attendance_rows += f"""
+                <tr>
+                    <td>{att.get("date", "N/A")}</td>
+                    <td>{att.get("time", att.get("timestamp", "N/A"))}</td>
+                </tr>
+            """
+    else:
+        attendance_rows = '<tr><td colspan="2" style="text-align: center; color: #777;">No attendance records found yet.</td></tr>'
 
     return f"""
     <!DOCTYPE html>
@@ -329,6 +384,15 @@ async def employee_dashboard(request: Request):
                 <form action="/employee/clock-in" method="POST">
                     <button type="submit">Clock In Today</button>
                 </form>
+                <h4 style="margin-top: 20px;">My Attendance History (Total Days: {len(my_attendance)})</h4>
+                <table>
+                    <thead>
+                        <tr><th>Date</th><th>Check-in Time</th></tr>
+                    </thead>
+                    <tbody>
+                        {attendance_rows}
+                    </tbody>
+                </table>
             </div>
 
             <!-- 2. Leave Request Section -->
@@ -368,6 +432,8 @@ async def employee_clock_in(request: Request):
     user = request.session.get("user")
     if not user:
         return RedirectResponse(url="/", status_code=303)
+    
+    # Store attendance with date and check-in time inside database.py handler
     mark_attendance(db, user["email"])
     return RedirectResponse(url="/employee/dashboard", status_code=303)
 

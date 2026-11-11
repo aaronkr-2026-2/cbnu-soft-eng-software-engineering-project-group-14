@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Employee Portal - HRMS</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f4f7f6; margin: 0; padding: 20px; }
+        .container { max-width: 1000px; margin: auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h2 { color: #333; }
+        .section { margin-top: 30px; padding-top: 15px; border-top: 1px solid #eee; }
+        button, .btn { background: #007bff; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
+        button:hover, .btn:hover { background: #0056b3; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #f8f9fa; }
+        .logout { float: right; color: #dc3545; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a class="logout" href="/logout">Logout</a>
+        <h2>Employee Portal</h2>
+        <p>Welcome back, <strong>{{ user.first_name }} {{ user.last_name }}</strong>!</p>
+        <hr>
+
+        <!-- 1. Time & Attendance -->
+        <div class="section">
+            <h3>Time & Attendance</h3>
+            <form action="/employee/clock-in" method="POST">
+                <button type="submit">Clock In Today</button>
+            </form>
+        </div>
+
+        <!-- 2. Leave Management -->
+        <div class="section">
+            <h3>Request Leave</h3>
+            <form action="/employee/request-leave" method="POST">
+                <p><label>Start Date: <input type="date" name="start_date" required></label></p>
+                <p><label>End Date: <input type="date" name="end_date" required></label></p>
+                <p><label>Reason: <input type="text" name="reason" required style="width: 300px;"></label></p>
+                <button type="submit">Submit Leave Request</button>
+            </form>
+        </div>
+
+        <!-- 3. Notice Board (PDF Downloads) -->
+        <div class="section">
+            <h3>Notice Board & Announcements</h3>
+            <table>
+                <tr><th>Title</th><th>Date Posted</th><th>Action</th></tr>
+                {% for notice in notices %}
+                <tr>
+                    <td>{{ notice.title }}</td>
+                    <td>{{ notice.uploaded_at }}</td>
+                    <td><a class="btn" href="{{ notice.file_path }}" target="_blank">Download PDF</a></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="3" style="text-align: center; color: #777;">No notices available right now.</td></tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+</body>
+</html>
