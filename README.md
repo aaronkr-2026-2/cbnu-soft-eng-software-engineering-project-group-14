@@ -1,18 +1,11 @@
-# software-project
+****Project live link: https://human-resource-management-system-7mxg.onrender.com****
+***How to use or get in the app-***
+First of all sign in with-
+  atik@company.com
+  2026-11-05 (Use as password)
+After signing in you will enter into the admin portal. 
 
-Team Software Engineering Projects
+<img width="1134" height="567" alt="admin dashboard" src="https://github.com/user-attachments/assets/4e0ada7b-3ac8-4a37-a6ec-f4fcf2979c89" />
+Complete all the information and then you can also access to the employee portal. To access the employee portal use your email and the date that you added the employee in YY-MM-DD format as password.
 
-Collect all your software engineering project files, resources, etc here.
 
-## `AI_LOG.md`
-
-Every time you update your project, please make a note of what you did in the `AI_LOG.md` file, according to the following template.
-
-```markdown
-## [Milestone name] — [Date]
-**Tool(s) used:**
-**What I asked for:**
-**What I kept as-is:**
-**What I changed or rejected, and why:**
-**Something the AI got wrong that I had to catch:**
-```
